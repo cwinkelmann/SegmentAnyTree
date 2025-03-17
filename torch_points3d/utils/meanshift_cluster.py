@@ -8,7 +8,7 @@ from multiprocessing import Process
 from functools import partial
 def meanshift_cluster(prediction, bandwidth):
     bandwidth = bandwidth #0.6
-    ms = MeanShift(bandwidth=bandwidth,bin_seeding=True) #, n_jobs=-1)
+    ms = MeanShift(bandwidth=bandwidth,bin_seeding=True, n_jobs=-1) #, n_jobs=-1)
     #print ('Mean shift clustering, might take some time ...')
     ms.fit(prediction)
     labels = ms.labels_
@@ -93,22 +93,17 @@ def cluster_single(embed_logits_logits_u, unique_in_batch, label_batch, local_in
             #normalize(sample_embed_logits, axis=0)
     
     partial_meanshift_cluster = partial(meanshift_cluster, bandwidth=bandwidth)
-    if unique_in_batch.shape[0]>0:
-        processes=unique_in_batch.shape[0]
-    else:
-        processes=1
-    with multiprocessing.Pool(processes=processes) as pool:
-        results = pool.map(partial_meanshift_cluster, all_clusters)
-        for i in range(len(results)):
-            pre_ins_labels_embed = results[i]
-            sampleInBatch_local_ind = local_logits[i]
-            unique_preInslabels = torch.unique(pre_ins_labels_embed)
-            for l in unique_preInslabels:
-                if l == -1:
-                    continue
-                label_mask_l = pre_ins_labels_embed == l
-                final_result.append(sampleInBatch_local_ind[label_mask_l])
-                cluster_type.append(type)        
+    results = [partial_meanshift_cluster(cluster) for cluster in all_clusters]
+    for i in range(len(results)):
+        pre_ins_labels_embed = results[i]
+        sampleInBatch_local_ind = local_logits[i]
+        unique_preInslabels = torch.unique(pre_ins_labels_embed)
+        for l in unique_preInslabels:
+            if l == -1:
+                continue
+            label_mask_l = pre_ins_labels_embed == l
+            final_result.append(sampleInBatch_local_ind[label_mask_l])
+            cluster_type.append(type)        
             
             #pre_ins_labels_embed = hdbscan_cluster(sample_embed_logits)
             #unique_preInslabels = torch.unique(pre_ins_labels_embed)
