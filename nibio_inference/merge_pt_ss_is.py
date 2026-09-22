@@ -43,6 +43,7 @@ class MergePtSsIs(object):
         self.output_file_path = output_file_path
         self.verbose = verbose
         self.source_las_path = source_las_path
+        self.written_path = None  # set by save(); .las if no LAZ backend is installed
 
     @staticmethod
     def _read_prediction(path, n_points):
@@ -95,7 +96,7 @@ class MergePtSsIs(object):
         return merged_df
 
     def save(self, merged_df):
-        return pandas_to_las(
+        self.written_path = pandas_to_las(
             merged_df,
             csv_file_provided=False,
             output_file_path=self.output_file_path,
@@ -103,6 +104,7 @@ class MergePtSsIs(object):
             verbose=self.verbose,
             source_las_path=self.source_las_path,
         )
+        return self.written_path
 
     def run(self):
         if self.verbose:

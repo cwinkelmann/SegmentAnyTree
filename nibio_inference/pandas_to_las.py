@@ -46,6 +46,13 @@ EXTENDED_COLUMN_DTYPES = {
 CRS_VLR_TYPES = (GeoKeyDirectoryVlr, GeoAsciiParamsVlr, GeoDoubleParamsVlr, WktCoordinateSystemVlr)
 
 
+def laz_backend_available():
+    try:
+        return len(laspy.LazBackend.detect_available()) > 0
+    except Exception:
+        return False
+
+
 def copy_crs_vlrs(source_las_path, header):
     """Copy the coordinate reference system VLRs of an existing LAS/LAZ into header."""
     with laspy.open(source_las_path) as src:
@@ -113,8 +120,10 @@ def pandas_to_las(csv, csv_file_provided=False, output_file_path=None, do_compre
         las_file[column] = df[column].to_numpy().astype(extra_dtypes[column])
 
     root, ext = os.path.splitext(output_file_path)
-    if do_compress:
-        output_file_path = root + ".laz"
+    if do_compress and not laz_backend_available():
+        print(f"No LAZ backend (lazrs/laszip) installed; writing uncompressed {root}.las instead")
+        do_compress = False
+    output_file_path = root + (".laz" if do_compress else ".las")
     las_file.write(output_file_path, do_compress=do_compress)
 
     if verbose:

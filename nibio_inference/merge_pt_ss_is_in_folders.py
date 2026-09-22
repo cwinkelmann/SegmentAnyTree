@@ -77,15 +77,16 @@ class MergePtSsIsInFolders(object):
             output_path = os.path.join(self.output_data_folder_path, stem(point_cloud) + ".laz")
             if original is None and self.verbose:
                 print(f"No original LAS/LAZ found for {point_cloud}; output will have no CRS")
-            MergePtSsIs(
+            merged = MergePtSsIs(
                 point_cloud=point_cloud,
                 semantic_segmentation=semantic,
                 instance_segmentation=instance,
                 output_file_path=output_path,
                 verbose=self.verbose,
                 source_las_path=original,
-            )()
-            written.append(output_path)
+            )
+            merged.run()
+            written.append(merged.written_path)
         return written
 
     def __call__(self, *args: Any, **kwds: Any) -> Any:

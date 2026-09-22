@@ -130,6 +130,7 @@ RUN TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST_VER} FORCE_CUDA=1 python3.8 -m p
     jupyterlab-widgets==1.0.2 \
     kiwisolver==1.3.2 \
     laspy==2.0.3 \
+    lazrs \
     llvmlite==0.33.0 \
     markdown==3.3.4 \
     markupsafe==2.0.1 \

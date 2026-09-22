@@ -200,6 +200,18 @@ def test_end_to_end_laz_keeps_crs_and_attributes(tmp_path, point_format):
         np.testing.assert_allclose(las.scan_angle * 0.006, src.scan_angle_rank, atol=0.006)
 
 
+def test_falls_back_to_las_when_no_laz_backend(tmp_path, monkeypatch):
+    in_dir, work, utm2local, xyz, sem, things, ins = _run_pipeline_to_merge(tmp_path)
+    os.rename(work / "semantic_result_0.ply", work / "semantic_segmentation_plot_a_out.ply")
+    os.rename(work / "result_0.ply", work / "instance_segmentation_plot_a_out.ply")
+    monkeypatch.setattr(laspy.LazBackend, "detect_available", staticmethod(lambda: ()))
+
+    written = MergePtSsIsInFolders(str(utm2local), str(work), str(tmp_path / "final"))()
+
+    assert written == [str(tmp_path / "final" / "plot_a_out.las")]
+    assert len(laspy.read(written[0]).points) == len(xyz)
+
+
 def test_merge_in_folders_fails_loudly_when_predictions_are_missing(tmp_path):
     in_dir, work, utm2local, *_ = _run_pipeline_to_merge(tmp_path)
     # no renamed prediction files at all
