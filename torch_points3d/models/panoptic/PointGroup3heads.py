@@ -481,9 +481,10 @@ class PointGroup3heads(BaseModel):
             pos = []
             for i, cluster in enumerate(all_clusters):
                 x.append(backbone_features[cluster])
-                coords.append(self.input.coords[cluster])
+                # coords may live on the CPU while cluster indices are on the GPU; torch >= 2 refuses mixed devices
+                coords.append(self.input.coords[cluster.to(self.input.coords.device)])
                 batch.append(i * torch.ones(cluster.shape[0]))
-                pos.append(self.input.pos[cluster])
+                pos.append(self.input.pos[cluster.to(self.input.pos.device)])
             batch_cluster = Data(x=torch.cat(x), coords=torch.cat(coords), batch=torch.cat(batch),)
 
             # Voxelise if required
@@ -551,9 +552,10 @@ class PointGroup3heads(BaseModel):
                     cluster = all_clusters[mask_i]
                     #for i, cluster in enumerate(all_clusters):
                     x.append(backbone_features[cluster])
-                    coords.append(self.input.coords[cluster])
+                    # coords may live on the CPU while cluster indices are on the GPU; torch >= 2 refuses mixed devices
+                    coords.append(self.input.coords[cluster.to(self.input.coords.device)])
                     batch.append(i * torch.ones(cluster.shape[0]))
-                    pos.append(self.input.pos[cluster])
+                    pos.append(self.input.pos[cluster.to(self.input.pos.device)])
                 batch_cluster = Data(x=torch.cat(x), coords=torch.cat(coords), batch=torch.cat(batch),)
 
                 # Voxelise if required

@@ -165,6 +165,8 @@ class PanopticTracker(SegmentationTracker):
         # global block_count
         if not hasattr(self, "block_count"):
             self.block_count = 0  # tells us which cylinder or sphere block track(..) is currently tracking
+        if not hasattr(self, "spheres_count"):
+            self.spheres_count = 0  # block index WITHIN the data file represented by self.cloud_count
         if not hasattr(self, "cloud_count"):
             self.cloud_count = 0  # tells us from which data file the currently tracked cylinder or sphere block was sampled
 
@@ -294,6 +296,7 @@ class PanopticTracker(SegmentationTracker):
             self._dump_visuals_fortest(outputs, originids, valid_c_idx)
 
         self.block_count += 1  # With each call of track(...), we go on cylinder or sphere block further
+        self.spheres_count += 1
 
         # @Treeins: tells us if we have reached the last cylinder or sphere block belonging to the data file represented by self.cloud_count
         if self.spheres_count == self._dataset.test_data_num_spheres[self.cloud_count]:
@@ -305,8 +308,6 @@ class PanopticTracker(SegmentationTracker):
             os.mkdir("viz_for_test_all_proposals")
         if not os.path.exists("viz_for_test_valid_proposals"):
             os.mkdir("viz_for_test_valid_proposals")
-        if not hasattr(self, "spheres_count"):
-            self.spheres_count = 0
         j = 0
         for i, cluster in enumerate(outputs.clusters):
             semantic_prob = outputs.semantic_logits[cluster, :].softmax(dim=1)
@@ -345,7 +346,6 @@ class PanopticTracker(SegmentationTracker):
                           ['x', 'y', 'z',
                            'sem_prob_1', 'sem_prob_2',  # @Treeins: two semantic segmentation classes: non-tree and tree
                            'pre_sem_label', 'mask_score', 'gt_sem_label'])
-        self.spheres_count += 1
 
     def get_cur_ins_pre_label(self, clusters, cluster_scores, predicted_semlabels):
         cur_ins_pre_label = -1 * np.ones_like(predicted_semlabels)
