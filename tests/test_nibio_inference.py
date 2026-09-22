@@ -27,15 +27,19 @@ from nibio_inference.rename_result_files_segmentation import rename_files as ren
 UTM_ORIGIN = (599_000.0, 6_640_000.0, 120.0)  # a plausible UTM 33N location, far from 0
 
 
-def make_utm_las(path, n=200, point_format=3, with_crs=True, seed=0):
-    """Write a small georeferenced LAS/LAZ with a duplicate point and a WKT CRS."""
+def make_utm_las(path, n=200, point_format=3, with_crs=True, seed=0, crs_as="wkt"):
+    """Write a small georeferenced LAS/LAZ with a duplicate point and a CRS (WKT or GeoTIFF keys)."""
     rng = np.random.default_rng(seed)
     xyz = rng.uniform(0, 30, size=(n, 3)) + np.array(UTM_ORIGIN)
     xyz[1] = xyz[0]  # one exact duplicate point
     header = laspy.LasHeader(point_format=point_format, version="1.4" if point_format >= 6 else "1.2")
     header.scale = [0.001, 0.001, 0.001]
     header.offset = list(UTM_ORIGIN)
-    if with_crs:
+    if with_crs and crs_as == "geotiff":
+        import pyproj
+        header.add_crs(pyproj.CRS.from_epsg(25833))  # LAS 1.2 header: laspy writes GeoTIFF keys, no WKT
+        assert not any(isinstance(v, laspy.vlrs.known.WktCoordinateSystemVlr) for v in header.vlrs)
+    elif with_crs:
         wkt = ('PROJCS["ETRS89 / UTM zone 33N",GEOGCS["ETRS89",DATUM["European_Terrestrial_Reference_System_1989",'
                'SPHEROID["GRS 1980",6378137,298.257222101]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],'
                'PROJECTION["Transverse_Mercator"],PARAMETER["latitude_of_origin",0],PARAMETER["central_meridian",15],'
@@ -128,11 +132,11 @@ def test_utm2local_ignores_non_point_cloud_files(tmp_path):
 
 # --------------------------------------------------------------------------- merge
 
-def _run_pipeline_to_merge(tmp_path, point_format=3, with_crs=True):
+def _run_pipeline_to_merge(tmp_path, point_format=3, with_crs=True, crs_as="wkt"):
     in_dir, work = tmp_path / "input_data", tmp_path / "work"
     in_dir.mkdir(); work.mkdir()
     utm2local = work / "utm2local"; utm2local.mkdir()
-    xyz = make_utm_las(str(in_dir / "plot_a.las"), point_format=point_format, with_crs=with_crs)
+    xyz = make_utm_las(str(in_dir / "plot_a.las"), point_format=point_format, with_crs=with_crs, crs_as=crs_as)
     process_file("plot_a.las", str(in_dir), str(utm2local))
     local = ply_to_pandas(str(utm2local / "plot_a_out.ply"))[["x", "y", "z"]].to_numpy()
     sem, things, ins = write_prediction_plys(str(work), 0, len(xyz), local)
@@ -198,6 +202,22 @@ def test_end_to_end_laz_keeps_crs_and_attributes(tmp_path, point_format):
     if point_format < 6:
         # scan_angle_rank (degrees, int8) becomes scan_angle (0.006 degree units, int16)
         np.testing.assert_allclose(las.scan_angle * 0.006, src.scan_angle_rank, atol=0.006)
+
+
+def test_geotiff_crs_of_las12_input_becomes_wkt_in_output(tmp_path):
+    """LAS 1.2 inputs carry GeoTIFF keys; the LAS 1.4 / point format 6 output must carry WKT."""
+    in_dir, work, utm2local, xyz, *_ = _run_pipeline_to_merge(tmp_path, point_format=3, crs_as="geotiff")
+    os.rename(work / "semantic_result_0.ply", work / "semantic_segmentation_plot_a_out.ply")
+    os.rename(work / "result_0.ply", work / "instance_segmentation_plot_a_out.ply")
+
+    written = MergePtSsIsInFolders(str(utm2local), str(work), str(tmp_path / "final"),
+                                   original_data_folder_path=str(in_dir))()
+
+    with laspy.open(written[0]) as f:
+        header = f.header
+    assert header.global_encoding.wkt is True
+    assert any(isinstance(v, laspy.vlrs.known.WktCoordinateSystemVlr) for v in header.vlrs)
+    assert header.parse_crs().to_epsg() == 25833
 
 
 def test_falls_back_to_las_when_no_laz_backend(tmp_path, monkeypatch):

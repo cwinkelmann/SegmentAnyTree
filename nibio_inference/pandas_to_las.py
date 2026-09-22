@@ -53,15 +53,45 @@ def laz_backend_available():
         return False
 
 
-def copy_crs_vlrs(source_las_path, header):
-    """Copy the coordinate reference system VLRs of an existing LAS/LAZ into header."""
+def copy_crs_vlrs(source_las_path, header, verbose=False):
+    """Carry the coordinate reference system of an existing LAS/LAZ over to header.
+
+    LAS 1.4 point formats 6-10 store the CRS as WKT; readers such as PDAL ignore
+    GeoTIFF keys on those files. A WKT VLR is copied as is. GeoTIFF keys (the usual
+    case for LAS 1.2/1.3 inputs) are converted to WKT with laspy.parse_crs, which
+    needs laspy >= 2.1 and pyproj. If that is not possible the GeoTIFF VLRs are
+    copied unchanged and a warning is printed.
+
+    Returns "wkt", "wkt-from-geotiff", "geotiff" or None (no CRS in the source).
+    """
     with laspy.open(source_las_path) as src:
-        crs_vlrs = [vlr for vlr in src.header.vlrs if isinstance(vlr, CRS_VLR_TYPES)]
+        src_header = src.header
+        crs_vlrs = [vlr for vlr in src_header.vlrs if isinstance(vlr, CRS_VLR_TYPES)]
+        wkt_vlrs = [vlr for vlr in crs_vlrs if isinstance(vlr, WktCoordinateSystemVlr)]
+        if wkt_vlrs:
+            for vlr in wkt_vlrs:
+                header.vlrs.append(vlr)
+            header.global_encoding.wkt = True
+            return "wkt"
+        if not crs_vlrs:
+            return None
+        try:
+            crs = src_header.parse_crs()
+        except Exception as exc:  # laspy < 2.1, pyproj missing, or keys that do not parse
+            crs, reason = None, exc
+        else:
+            reason = "parse_crs returned None"
+
+    if crs is not None:
+        header.add_crs(crs, keep_compatibility=False)  # writes a WKT VLR and sets the wkt bit
+        return "wkt-from-geotiff"
+
     for vlr in crs_vlrs:
         header.vlrs.append(vlr)
-        if isinstance(vlr, WktCoordinateSystemVlr):
-            header.global_encoding.wkt = True
-    return len(crs_vlrs)
+    print(f"Warning: could not convert the GeoTIFF CRS of {source_las_path} to WKT ({reason}); "
+          "copied the GeoTIFF keys, which readers may ignore on LAS 1.4 point format 6. "
+          "Install laspy>=2.1 and pyproj to fix this.")
+    return "geotiff"
 
 
 def pandas_to_las(csv, csv_file_provided=False, output_file_path=None, do_compress=False, verbose=False,
@@ -95,9 +125,9 @@ def pandas_to_las(csv, csv_file_provided=False, output_file_path=None, do_compre
     las_header.scale = scale
     las_header.offset = offset
     if source_las_path is not None:
-        copied = copy_crs_vlrs(source_las_path, las_header)
+        how = copy_crs_vlrs(source_las_path, las_header, verbose=verbose)
         if verbose:
-            print(f"Copied {copied} CRS VLR(s) from {source_las_path}")
+            print(f"CRS from {source_las_path}: {how or 'none found'}")
 
     standard_columns = list(las_header.point_format.dimension_names)
     columns_which_match = [c for c in standard_columns if c in df.columns and c not in ("X", "Y", "Z")]
