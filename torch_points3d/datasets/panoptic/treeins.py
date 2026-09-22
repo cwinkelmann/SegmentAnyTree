@@ -518,7 +518,10 @@ def final_eval(pre_sem, pre_ins_embed, pre_ins_offset, gt_sem, gt_ins, output_fi
 
 class PanopticTreeinsBase:
     INSTANCE_CLASSES = CLASSES_INV.keys()
-    NUM_MAX_OBJECTS = 80  # @Treeins: increased int because we had more number of instances in data files from the Treeins data set
+    # Upper bound on tree instances inside one training cylinder (only sizes the center_label
+    # tensor). FOR-instance V2 plots such as RMIT and BlueCat are denser than the original
+    # FOR-instance data, so this is generous; exceeding it raises in set_extra_labels.
+    NUM_MAX_OBJECTS = 256
 
     STUFFCLASSES = torch.tensor([i for i in VALID_CLASS_IDS if i not in SemIDforInstance])
     THINGCLASSES = torch.tensor([i for i in VALID_CLASS_IDS if i in SemIDforInstance])
