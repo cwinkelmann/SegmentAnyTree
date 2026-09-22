@@ -1,49 +1,36 @@
-import json
-import sys
+"""Rename the tracker's result_<i>.ply to instance_segmentation_<input name>.ply.
+
+<i> is the position of the input file in data.fold of the eval config.
+"""
 import os
+import sys
+
 import yaml
 
-from nibio_inference.bring_back_to_utm_coordinates import bring_back_to_utm_coordinates
 
-def rename_files(yaml_file, directory):
-    try:
-        with open(yaml_file, 'r') as file:
-            # Load the YAML file
-            data = yaml.load(file, Loader=yaml.FullLoader)
+def rename_files(yaml_file, directory, old_pattern="result_{}.ply", new_prefix="instance_segmentation_"):
+    with open(yaml_file, "r") as file:
+        data = yaml.safe_load(file)
 
-            # Get the fold section
-            fold_section = data.get('data', {}).get('fold', [])
+    fold_section = data.get("data", {}).get("fold", [])
+    if not fold_section:
+        raise ValueError(f"{yaml_file} has an empty data.fold; nothing to rename")
 
-            for index, file_path in enumerate(fold_section):
+    for index, file_path in enumerate(fold_section):
+        old_file_path = os.path.join(directory, old_pattern.format(index))
+        new_file_path = os.path.join(directory, new_prefix + os.path.basename(file_path))
 
-                # Extract the file name from the path
-                file_name = os.path.basename(file_path)
-                
-                # Create new file name as result_index.ply
-                old_file_name = f'result_{index}.ply'
+        if not os.path.isfile(old_file_path):
+            raise FileNotFoundError(
+                f"{old_file_path} not found: inference did not write output for {file_path}"
+            )
+        os.replace(old_file_path, new_file_path)
+        print(f"Renamed {old_file_path} to {new_file_path}")
 
-                # use file_name to create new file name by add instance_segmenta
-                new_file_name = 'instance_segmentation_' + file_name 
 
-                old_file_path = os.path.join(directory, old_file_name)
-                new_file_path = os.path.join(directory, new_file_name)
-
-                # Rename the file
-                os.rename(old_file_path, new_file_path)
-
-                # bring_back_to_utm_coordinates(new_file_path, file_path)
-                
-                print(f'Renamed {old_file_path} to {new_file_path} ')
-
-    except Exception as e:
-        print(f'An error occurred: {e}')
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     if len(sys.argv) != 3:
-        print('Usage: python script.py <yaml_file> <directory>')
+        print("Usage: python rename_result_files_instance.py <eval.yaml> <directory with result_i.ply>")
         sys.exit(1)
-    
-    yaml_file = sys.argv[1]  # Path to the YAML file that contains the paths of the .ply files
-    directory = sys.argv[2] # Path to the directory containing the .ply files after inference
 
-    rename_files(yaml_file, directory)
+    rename_files(sys.argv[1], sys.argv[2])

@@ -1,63 +1,66 @@
-import os
+"""Fill the run-specific paths into a copy of conf/eval.yaml.
+
+Sets data.fold (the .ply files to predict), data.dataroot (where the dataset
+cache goes), checkpoint_dir (where <model_name>.pt lives) and hydra.run.dir
+(where eval.py writes its outputs).
+"""
 import argparse
+import os
+
 import yaml
-from collections import OrderedDict
+
 
 def get_all_ply_paths(directory):
-    """Get paths of all .ply files in the given directory"""
+    """Get paths of all .ply files in the given directory (sorted, recursive)."""
     ply_paths = []
-    for root, directories, files in os.walk(directory):
+    for root, _directories, files in os.walk(directory):
         for filename in files:
-            if filename.endswith('.ply'):
-                filepath = os.path.join(root, filename)
-                ply_paths.append(filepath)
-    return ply_paths
+            if filename.endswith(".ply"):
+                ply_paths.append(os.path.join(root, filename))
+    return sorted(ply_paths)
 
-def modify_yaml(file_path, new_fold, output_dir_path=None):
-    """Modify the YAML file"""
-    with open(file_path, 'r') as file:
+
+def modify_yaml(file_path, new_fold, output_dir_path=None, checkpoint_dir=None, dataroot=None):
+    """Modify the YAML file in place."""
+    with open(file_path, "r") as file:
         data = yaml.safe_load(file)
 
-    # Ensuring data is an OrderedDict
-    data = OrderedDict(data)
-
-    # Update the fold field
-    data['data']['fold'] = list(new_fold)
-
-    # Update the output_dir field
+    data.setdefault("data", {})
+    data["data"]["fold"] = list(new_fold)
+    if dataroot:
+        data["data"]["dataroot"] = dataroot
+    if checkpoint_dir:
+        data["checkpoint_dir"] = checkpoint_dir
     if output_dir_path:
-        data['hydra']['run']['dir'] = output_dir_path
+        data.setdefault("hydra", {}).setdefault("run", {})["dir"] = output_dir_path
 
-    # Use this function to output an OrderedDict as YAML
-    def ordered_dump(data, stream=None, Dumper=yaml.Dumper, **kwds):
-        class OrderedDumper(Dumper):
-            pass
-        def _dict_representer(dumper, data):
-            return dumper.represent_mapping(
-                yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
-                data.items())
-        OrderedDumper.add_representer(OrderedDict, _dict_representer)
-        return yaml.dump(data, stream, OrderedDumper, **kwds)
+    with open(file_path, "w") as file:
+        yaml.safe_dump(data, file, default_flow_style=False, sort_keys=False)
 
-    with open(file_path, 'w') as file:
-        ordered_dump(data, file, Dumper=yaml.SafeDumper, default_flow_style=False)
 
 def main():
-    parser = argparse.ArgumentParser(description='Modify fold field in a YAML file.')
-    parser.add_argument('yaml_file_path', help='Path to the YAML file to be modified.')
-    parser.add_argument('folder_path', help='Path to the folder containing .ply files.')
-    parser.add_argument('output_dir_path', help='Path to the output directory.')
+    parser = argparse.ArgumentParser(description="Fill run-specific paths into an eval.yaml.")
+    parser.add_argument("yaml_file_path", help="Path to the eval.yaml to be modified in place.")
+    parser.add_argument("folder_path", help="Folder containing the .ply files to predict (utm2local output).")
+    parser.add_argument("output_dir_path", help="Directory eval.py should write its outputs to.")
+    parser.add_argument("--checkpoint_dir", default=None, help="Directory containing <model_name>.pt.")
+    parser.add_argument("--dataroot", default=None,
+                        help="Dataset root for the processed cache (default: folder_path).")
 
     args = parser.parse_args()
 
-    # Get all .ply file paths in the provided folder
     ply_paths = get_all_ply_paths(args.folder_path)
     if not ply_paths:
-        print(f"No .ply files found in the directory: {args.folder_path}")
-        raise SystemExit  # Exit the program
+        raise SystemExit(f"No .ply files found in the directory: {args.folder_path}")
 
-    # Modify the YAML file
-    modify_yaml(args.yaml_file_path, ply_paths, args.output_dir_path)
+    modify_yaml(
+        args.yaml_file_path,
+        ply_paths,
+        args.output_dir_path,
+        checkpoint_dir=args.checkpoint_dir,
+        dataroot=args.dataroot or args.folder_path,
+    )
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
