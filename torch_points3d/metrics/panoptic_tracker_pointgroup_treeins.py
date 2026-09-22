@@ -169,6 +169,8 @@ class PanopticTracker(SegmentationTracker):
             self.cloud_count = 0  # tells us from which data file the currently tracked cylinder or sphere block was sampled
 
         self._iou_threshold = iou_threshold
+        # tracker_options.save_viz: write per-proposal / per-block debug PLYs (viz*/ folders). Off by default.
+        self._save_viz = bool(kwargs.get("save_viz", False))
         BaseTracker.track(self, model)
         outputs: PanopticResults = model.get_output()
         labels: PanopticLabels = model.get_labels()
@@ -288,7 +290,8 @@ class PanopticTracker(SegmentationTracker):
         #    self._test_area.ins_pre = self.get_cur_ins_pre_label(self._test_area.clusters, self._test_area.scores.cpu().numpy(), self._test_area.ins_pre.cpu().numpy())
         #    self._test_area.ins_pre = torch.tensor(self._test_area.ins_pre).to(model.device)
 
-        self._dump_visuals_fortest(outputs, originids, valid_c_idx)
+        if self._save_viz:
+            self._dump_visuals_fortest(outputs, originids, valid_c_idx)
 
         self.block_count += 1  # With each call of track(...), we go on cylinder or sphere block further
 
@@ -364,9 +367,10 @@ class PanopticTracker(SegmentationTracker):
         has_prediction = pre_sub_ins != -1
         # print(np.any(has_prediction))
         if np.any(has_prediction):
-            if not os.path.exists("viz"):
+            save_viz = getattr(self, "_save_viz", False)
+            if save_viz and not os.path.exists("viz"):
                 os.mkdir("viz")
-            if hasattr(outputs, 'embed_logits'):
+            if save_viz and hasattr(outputs, 'embed_logits'):
                 val_name = join("viz", "block_sub_embed_" + str(self.block_count))
                 embed_i = outputs.embed_logits.cpu().detach().numpy()
                 sample_embed_logits = normalize(embed_i, axis=0)
@@ -382,7 +386,7 @@ class PanopticTracker(SegmentationTracker):
                           ['x', 'y', 'z', 'preins_label', 'ins_gt', 'embed1', 'embed2', 'embed3', 'embed4', 'embed5',
                            # ['x', 'y', 'z', 'preins_label','ins_gt','embed1','embed2','embed3','embed4','embed5','embed6','embed7','embed8',
                            'pre_sem_label', 'gt_sem_label'])
-            if hasattr(outputs, 'offset_logits'):
+            if save_viz and hasattr(outputs, 'offset_logits'):
                 val_name = join("viz", "block_sub_offset_" + str(self.block_count))
                 offset_i = outputs.offset_logits.cpu().detach().numpy()
                 shifted_cor = offset_i + self._test_area[self.cloud_count].pos[origin_sub_ids].detach().cpu().numpy()
@@ -407,12 +411,13 @@ class PanopticTracker(SegmentationTracker):
             # pre_ins = pre_sub_ins[has_prediction][x_idx.detach().cpu().numpy()]
             pre_ins = pre_sub_ins[x_idx.detach().cpu().numpy()]
             # has_prediction = full_ins_pred != -1
-            val_name = join("viz", "block_" + str(self.block_count))
-            write_ply(val_name,
-                      [self._test_area[self.cloud_count].pos[originids].detach().cpu().numpy(),
-                       pre_ins.astype('int32'),
-                       ],
-                      ['x', 'y', 'z', 'preins_label'])
+            if save_viz:
+                val_name = join("viz", "block_" + str(self.block_count))
+                write_ply(val_name,
+                          [self._test_area[self.cloud_count].pos[originids].detach().cpu().numpy(),
+                           pre_ins.astype('int32'),
+                           ],
+                          ['x', 'y', 'z', 'preins_label'])
 
             t_num_clusters = np.max(pre_ins) + 1
             # print(np.unique(pre_ins))
@@ -604,7 +609,8 @@ class PanopticTracker(SegmentationTracker):
                        test_area_i.pos,
                        torch.argmax(full_pred, 1).numpy(), #[0, ..]
                        test_area_i.y,   #[-1, ...]
-                       "semantic_result_{}.ply".format(i)
+                       "semantic_result_{}.ply".format(i),
+                       index=np.arange(test_area_i.pos.shape[0]),
                     )
                     # instance
                     has_prediction = test_area_i.ins_pre != -1
@@ -700,6 +706,7 @@ class PanopticTracker(SegmentationTracker):
                         full_ins_pred[things_idx].numpy(),
                         "result_{}.ply".format(i),
                         # @Treeins: save instance segmentation prediction of current data file
+                        index=torch.nonzero(things_idx, as_tuple=True)[0].numpy(),
                     )
 
                     print("writing instance ply done")

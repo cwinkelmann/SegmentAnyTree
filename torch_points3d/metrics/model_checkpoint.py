@@ -171,7 +171,13 @@ class ModelCheckpoint(object):
         # Conversion of run_config to save a dictionary and not a pickle of omegaconf
         rc = OmegaConf.to_container(copy.deepcopy(run_config))
         self._checkpoint = Checkpoint.load(load_dir, check_name, run_config=rc, strict=strict, resume=resume)
+        # The dataset config comes from the checkpoint (the training run). Only the
+        # run-specific bits are taken from the current config: which files to
+        # predict (fold) and where the processed cache goes (dataroot), so a
+        # checkpoint trained on another machine can be used without its paths.
         self._checkpoint.run_config['data']['fold'] = run_config.data.fold
+        if run_config.data.get("dataroot"):
+            self._checkpoint.run_config['data']['dataroot'] = run_config.data.dataroot
         self._resume = resume
         self._selection_stage = selection_stage
 

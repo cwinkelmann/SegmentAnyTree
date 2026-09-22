@@ -57,46 +57,48 @@ def to_ply(pos, label, file):
     print('out')
 
 
-def to_eval_ply(pos, pre_label, gt, file):
+def _index_dtype(index):
+    # orig_index = row number of the point in the raw input cloud; lets the
+    # post-processing merge predictions back without matching on coordinates
+    return [("orig_index", "u4")] if index is not None else []
+
+
+def to_eval_ply(pos, pre_label, gt, file, index=None):
     assert len(pre_label.shape) == 1
     assert len(gt.shape) == 1
     assert pos.shape[0] == pre_label.shape[0]
     assert pos.shape[0] == gt.shape[0]
     pos = np.asarray(pos)
     ply_array = np.ones(
-        pos.shape[0], dtype=[("x", "f4"), ("y", "f4"), ("z", "f4"), ("preds", "int16"), ("gt", "int16")]
+        pos.shape[0],
+        dtype=[("x", "f4"), ("y", "f4"), ("z", "f4"), ("preds", "int16"), ("gt", "int16")] + _index_dtype(index),
     )
     ply_array["x"] = pos[:, 0]
     ply_array["y"] = pos[:, 1]
     ply_array["z"] = pos[:, 2]
     ply_array["preds"] = np.asarray(pre_label)
     ply_array["gt"] = np.asarray(gt)
+    if index is not None:
+        ply_array["orig_index"] = np.asarray(index)
     el = PlyElement.describe(ply_array, 'vertex')
-    PlyData([el], text=True).write(file)
+    PlyData([el], text=False).write(file)
 
 
-def to_ins_ply(pos, label, file):
+def to_ins_ply(pos, label, file, index=None):
     assert len(label.shape) == 1
     assert pos.shape[0] == label.shape[0]
     pos = np.asarray(pos)
-    max_instance = np.max(np.asarray(label)).astype(np.int32) + 1
-    # rd_colors = np.random.randint(255, size=(max_instance, 3), dtype=np.uint8)
-    # colors = rd_colors[np.asarray(label).astype(int)]
-    # ply_array = np.ones(
-    #     pos.shape[0], dtype=[("x", "f4"), ("y", "f4"), ("z", "f4"), ("red", "u1"), ("green", "u1"), ("blue", "u1"), ("preds", "int16")]
-    # )
     ply_array = np.ones(
-        pos.shape[0], dtype=[("x", "f4"), ("y", "f4"), ("z", "f4"), ("preds", "int16")]
+        pos.shape[0], dtype=[("x", "f4"), ("y", "f4"), ("z", "f4"), ("preds", "int16")] + _index_dtype(index)
     )
     ply_array["x"] = pos[:, 0]
     ply_array["y"] = pos[:, 1]
     ply_array["z"] = pos[:, 2]
-    # ply_array["red"] = colors[:, 0]
-    # ply_array["green"] = colors[:, 1]
-    # ply_array["blue"] = colors[:, 2]
     ply_array["preds"] = np.asarray(label)
+    if index is not None:
+        ply_array["orig_index"] = np.asarray(index)
     el = PlyElement.describe(ply_array, 'vertex')
-    PlyData([el], text=True).write(file)
+    PlyData([el], text=False).write(file)
 
 
 # @Treeins: added parameter output_file_name because we now save several final evaluation files because we have several test files
@@ -702,7 +704,7 @@ class TreeinsFusedDataset(BaseDataset):
         to_ply(pos, label, file)
 
     @staticmethod
-    def to_eval_ply(pos, pre_label, gt, file):
+    def to_eval_ply(pos, pre_label, gt, file, index=None):
         """ Allows to save npm3d predictions to disk for evaluation
 
         Parameters
@@ -715,12 +717,14 @@ class TreeinsFusedDataset(BaseDataset):
             instance GT label
         file : string
             Save location
+        index : array-like, optional
+            row index of each point in the raw input cloud (written as orig_index)
         """
-        to_eval_ply(pos, pre_label, gt, file)
+        to_eval_ply(pos, pre_label, gt, file, index=index)
 
     @staticmethod
-    def to_ins_ply(pos, label, file):
-        """ Allows to save npm3d instance predictions to disk using random color
+    def to_ins_ply(pos, label, file, index=None):
+        """ Allows to save npm3d instance predictions to disk
 
         Parameters
         ----------
@@ -730,8 +734,10 @@ class TreeinsFusedDataset(BaseDataset):
             predicted instance label
         file : string
             Save location
+        index : array-like, optional
+            row index of each point in the raw input cloud (written as orig_index)
         """
-        to_ins_ply(pos, label, file)
+        to_ins_ply(pos, label, file, index=index)
 
     @staticmethod
     def final_eval(pre_sem, pre_ins_embed, pre_ins_offset, gt_sem, gt_ins, output_file_name):  # @Treeins
