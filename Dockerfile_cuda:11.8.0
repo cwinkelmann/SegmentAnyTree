@@ -261,4 +261,9 @@ RUN mkdir -p /home/datascience
 COPY . /home/nibio/mutable-outside-world
 WORKDIR /home/nibio/mutable-outside-world
 
+# The checkpoint is stored with Git LFS. Without `git lfs pull` on the host the build
+# context only contains a 134-byte pointer file; fail the build instead of shipping it.
+RUN test "$(wc -c < model_file/PointGroup-PAPER.pt)" -gt 1000000 || \
+    (echo "model_file/PointGroup-PAPER.pt is a Git LFS pointer. Run 'git lfs install --local && git lfs pull' before building." && exit 1)
+
 ENTRYPOINT ["bash", "run_oracle_pipeline.sh"]

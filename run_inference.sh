@@ -1,98 +1,93 @@
 #!/bin/bash
-set -e
+# Run SegmentAnyTree inference on a folder of .las / .laz / .ply point clouds.
+#
+#   bash run_inference.sh <input_dir> <output_dir> [clean_output_dir=true]
+#
+# Environment variables:
+#   SAT_MODEL_DIR   directory containing PointGroup-PAPER.pt   (default: <repo>/model_file)
+#   SAT_N_JOBS      files converted in parallel in the utm2local step (default: 4)
+#
+# Results: <output_dir>/final_results/<name>_out.laz with PredSemantic and PredInstance
+# dimensions and the CRS of the input file.
+set -euo pipefail
 
-# Provide path to the input and output directories and also information if to clean the output directory from command line
-SOURCE_DIR="$1"
-DEST_DIR="$2"
-CLEAN_OUTPUT_DIR="$3"
+SOURCE_DIR="${1:-}"
+DEST_DIR="${2:-}"
+CLEAN_OUTPUT_DIR="${3:-true}"
 
-# Set default values if not provided
-: "${SOURCE_DIR:=/home/nibio/mutable-outside-world/data_for_test}"
-: "${DEST_DIR:=/home/nibio/mutable-outside-world/data_for_test_results}"
-: "${CLEAN_OUTPUT_DIR:=true}"
+# The directory this script lives in; everything else is relative to it
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MODEL_DIR="${SAT_MODEL_DIR:-$SCRIPT_DIR/model_file}"
+MODEL_FILE="$MODEL_DIR/PointGroup-PAPER.pt"
 
-# If someone fails to provide this correctly then print the usage and exit
-if [ -z "$SOURCE_DIR" ] || [ -z "$DEST_DIR" ] || [ -z "$CLEAN_OUTPUT_DIR" ]; then
-    echo "Usage: run_inference.sh <path_to_input_dir> <path_to_output_dir> <clean_output_dir>"
+: "${SOURCE_DIR:=$SCRIPT_DIR/data_for_test}"
+: "${DEST_DIR:=$SCRIPT_DIR/data_for_test_results}"
+
+if [ ! -d "$SOURCE_DIR" ]; then
+    echo "Usage: run_inference.sh <path_to_input_dir> <path_to_output_dir> [clean_output_dir]"
+    echo "Input directory does not exist: $SOURCE_DIR"
     exit 1
 fi
 
-# Clear the output directory if requested
-if [ "$CLEAN_OUTPUT_DIR" = "true" ]; then
-    rm -rf "$DEST_DIR"/*
+# Fail early on the most common setup problem: the checkpoint is a Git LFS pointer, not the model
+if [ ! -f "$MODEL_FILE" ]; then
+    echo "Model checkpoint not found: $MODEL_FILE (set SAT_MODEL_DIR)"
+    exit 1
+fi
+if [ "$(wc -c < "$MODEL_FILE")" -lt 1000000 ]; then
+    echo "$MODEL_FILE is only $(wc -c < "$MODEL_FILE") bytes: it is a Git LFS pointer, not the model."
+    echo "Run 'git lfs install --local && git lfs pull' in $SCRIPT_DIR first."
+    exit 1
 fi
 
-# Check if local paths are provided, change them to absolute paths if so
-if [[ "$SOURCE_DIR" != /* ]]; then
-    SOURCE_DIR=$(pwd)/"$SOURCE_DIR"
-fi
+# Make relative paths absolute (hydra changes the working directory)
+[[ "$SOURCE_DIR" != /* ]] && SOURCE_DIR="$(pwd)/$SOURCE_DIR"
+[[ "$DEST_DIR" != /* ]] && DEST_DIR="$(pwd)/$DEST_DIR"
 
-if [[ "$DEST_DIR" != /* ]]; then
-    DEST_DIR=$(pwd)/"$DEST_DIR"
-fi
+export PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 
-# Set the script directory and add it to the PYTHONPATH
-SCRIPT_DIR="/home/nibio/mutable-outside-world"
-export PYTHONPATH="$SCRIPT_DIR:$PYTHONPATH"
-
-# Print the input and output directories
-echo "Input directory: $SOURCE_DIR"
+echo "Input directory:  $SOURCE_DIR"
 echo "Output directory: $DEST_DIR"
 echo "Script directory: $SCRIPT_DIR"
+echo "Model:            $MODEL_FILE"
 
-# Rename the input files to the format that the inference script expects 
-# Change '-' to '_' in the file names
+mkdir -p "$DEST_DIR"
+if [ "$CLEAN_OUTPUT_DIR" = "true" ]; then
+    find "$DEST_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+fi
 
-# Copy the input files to the output directory to avoid changing the original files in an input_data directory
+# Copy the input files so the originals are never touched
 mkdir -p "$DEST_DIR/input_data"
 cp -r "$SOURCE_DIR/"* "$DEST_DIR/input_data/"
 
+# '-' and spaces in file names become '_' (the inference scripts split names on these)
 python3 "$SCRIPT_DIR/nibio_inference/fix_naming_of_input_files.py" "$DEST_DIR/input_data"
 
-# UTM normalization 
+# UTM -> local coordinates, written as binary PLY, with the shift stored in *_min_values.json
 python3 "$SCRIPT_DIR/nibio_inference/pipeline_utm2local_parallel.py" -i "$DEST_DIR/input_data" -o "$DEST_DIR/utm2local"
 
-# Update the eval.yaml file with the correct paths
-cp "$SCRIPT_DIR/conf/eval.yaml" "$DEST_DIR"
-python3 "$SCRIPT_DIR/nibio_inference/modify_eval.py" "$DEST_DIR/eval.yaml" "$DEST_DIR/utm2local" "$DEST_DIR"
+# The dataset cache lives under the dataroot; never reuse one from an earlier run
+rm -rf "$DEST_DIR/utm2local/treeinsfused"
 
-# clear cache
-python3 "$SCRIPT_DIR/nibio_inference/clear_cache.py" --eval_yaml "$DEST_DIR/eval.yaml"
+# Fill the run-specific paths into a copy of conf/eval.yaml
+cp "$SCRIPT_DIR/conf/eval.yaml" "$DEST_DIR/eval.yaml"
+python3 "$SCRIPT_DIR/nibio_inference/modify_eval.py" "$DEST_DIR/eval.yaml" "$DEST_DIR/utm2local" "$DEST_DIR" \
+    --checkpoint_dir "$MODEL_DIR" --dataroot "$DEST_DIR/utm2local"
 
-# Run the inference script with the config file
-python3 eval.py --config-name "$DEST_DIR/eval.yaml"
+# Run the model. hydra.run.dir is $DEST_DIR, so result_<i>.ply etc. land there.
+python3 "$SCRIPT_DIR/eval.py" --config-name "$DEST_DIR/eval.yaml"
 
 echo "Done with inference using the config file: $DEST_DIR/eval.yaml"
 
-# Rename the output files result_0.ply , result_1.ply, ... to the original file names but with the prefix "inference_"
+# result_<i>.ply -> instance_segmentation_<name>.ply, semantic_result_<i>.ply -> semantic_segmentation_<name>.ply
 python3 "$SCRIPT_DIR/nibio_inference/rename_result_files_instance.py" "$DEST_DIR/eval.yaml" "$DEST_DIR"
-
-# Rename segmentation files
 python3 "$SCRIPT_DIR/nibio_inference/rename_result_files_segmentation.py" "$DEST_DIR/eval.yaml" "$DEST_DIR"
 
 FINAL_DEST_DIR="$DEST_DIR/final_results"
 
-# Run merge script
-python3 "$SCRIPT_DIR/nibio_inference/merge_pt_ss_is_in_folders.py" -i "$DEST_DIR/utm2local" -s "$DEST_DIR" -o "$FINAL_DEST_DIR" -v
+# Merge predictions onto the input points, shift back to UTM, copy the CRS, write LAZ
+python3 "$SCRIPT_DIR/nibio_inference/merge_pt_ss_is_in_folders.py" \
+    -i "$DEST_DIR/utm2local" -s "$DEST_DIR" -o "$FINAL_DEST_DIR" -d "$DEST_DIR/input_data" -v
 
-# remove numbers in the beginning of the file names
-
-# Loop through all files in the specified folder
-for file in "$FINAL_DEST_DIR"/*; do
-    # Extract just the filename from the path
-    filename=$(basename "$file")
-
-    # Use parameter expansion to remove the initial number and underscore
-    new_name=$(echo "$filename" | sed 's/^[0-9]*_//')
-
-    # Construct the new file path
-    new_file_path="$FINAL_DEST_DIR/$new_name"
-
-    # Rename the file
-    mv -n "$file" "$new_file_path"
-done
-
-# Avoid using ls to count files. This way, you can handle filenames with newlines or other problematic characters.
-num_files=$(find "$FINAL_DEST_DIR" -maxdepth 1 -type f | wc -l)
-
+num_files=$(find "$FINAL_DEST_DIR" -maxdepth 1 -type f -name '*.laz' | wc -l)
 echo "Number of files in the final results directory: $num_files"
