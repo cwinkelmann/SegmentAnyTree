@@ -63,65 +63,48 @@ Once you introduce changes to `run_docker_locally.sh` file, you should run it: `
 
 
 ## Inference
-This section explains how to use the inference script (`run_inference.sh`) to process data and manage the output. This is to be used if you do not run using docker container.
-Follow the steps below for successful execution. 
+`run_inference.sh` runs the whole pipeline on a folder of point clouds. This is what the docker image
+runs internally; you can also run it directly on a Linux machine with an NVIDIA GPU and the
+dependencies from the `Dockerfile` installed.
 
-### Steps to Use the Script
+```bash
+git lfs install --local && git lfs pull      # once: fetch the 665 MB checkpoint model_file/PointGroup-PAPER.pt
+bash run_inference.sh <input_dir> <output_dir> [clean_output_dir=true]
+```
 
-1. **Set Up Environment**:
-   - The script defines the working directory (`WORK_DIR`) and ensures all necessary modules are accessible by updating the `PYTHONPATH`. No changes are needed unless the working directory path must be modified.
-   ```bash
-   WORK_DIR='/home/nibio/mutable-outside-world'
-   export PYTHONPATH=$WORK_DIR:$PYTHONPATH
-   ```
+- **Input**: a flat folder of `.las`, `.laz` or `.ply` files, one plot per file. Only x/y/z are needed;
+  other attributes are passed through. Georeferenced (UTM) coordinates are fine: each file is shifted to
+  local coordinates before inference and shifted back afterwards.
+- **Output**: `<output_dir>/final_results/<name>_out.laz` (LAS 1.4, point format 6) with the original
+  attributes plus `PredSemantic` (0 = non-tree, 1 = tree) and `PredInstance` (tree id from 1, 0 = no tree).
+  The CRS of the input LAS/LAZ is copied to the output.
+- `SAT_MODEL_DIR` points to a directory with a different `PointGroup-PAPER.pt` (default `model_file/`).
+- `tracker_options.save_viz: True` in `conf/eval.yaml` writes per-proposal debug PLYs (`viz*/`); off by default.
 
-2. **Provide Input Parameters**:
-   - The script requires three parameters to run:
-     1. **SOURCE_DIR**: The input directory with files to process.
-     2. **DEST_DIR**: The output directory where results will be saved.
-     3. **CLEAN_OUTPUT_DIR**: Set to `true` or `false` to decide if the output directory should be cleaned before execution.
+Steps the script performs: copy inputs to `<output_dir>/input_data`, normalise file names
+(`nibio_inference/fix_naming_of_input_files.py`), shift to local coordinates
+(`pipeline_utm2local_parallel.py`), fill the run paths into a copy of `conf/eval.yaml` (`modify_eval.py`),
+run `eval.py`, rename `result_<i>.ply` / `semantic_result_<i>.ply` to the input names, and merge the
+predictions back onto the input points (`merge_pt_ss_is_in_folders.py`).
 
-   - If no parameters are provided, default values are used:
-   ```bash
-   SOURCE_DIR="$WORK_DIR/data_for_test"
-   DEST_DIR="$WORK_DIR/data_for_test_results"
-   CLEAN_OUTPUT_DIR=true
-   ```
-
-3. **Run the Script**:
-   - To execute the script, use the following command:
-   ```bash
-   bash run_inference.sh <path_to_input_dir> <path_to_output_dir> <clean_output_dir>
-   ```
-
-4. **Cleaning the Output Directory**:
-   - If `CLEAN_OUTPUT_DIR` is set to `true`, the script will remove existing contents from the output directory before processing.
-
-5. **File Preparation**:
-   - The script copies input files to an `input_data` folder in the output directory to avoid modifying the original files:
-   ```bash
-   cp -r "$SOURCE_DIR/"* "$DEST_DIR/input_data/"
-   ```
-
-6. **Run Python Scripts**:
-   - The script runs multiple Python scripts for tasks like updating the `eval.yaml` file, renaming files, and performing UTM normalization. These scripts are called sequentially to ensure correct data preparation.
-
-7. **Inference Execution**:
-   - After preparing the files, the script runs the inference pipeline with this command:
-   ```bash
-   bash large_PC_predict.sh "$DEST_DIR"
-   ```
-
-8. **Post-Processing and Results**:
-   - After inference, the script processes and renames output files, stores them in a `final_results` folder, and counts the number of result files generated:
- 
-
+Tests for the pre/post-processing scripts (no GPU needed): `pip install pytest laspy[lazrs] pyproj && pytest tests/`
 
 ## Training
-Please follow the command to train the model.
-`python train.py task=panoptic data=panoptic/treeins models=panoptic/area4_ablation_3heads model_name=PointGroup-PAPER training=treeins job_name=treeins_my_first_run`
+```bash
+python train.py task=panoptic data=panoptic/treeins_rad8 models=panoptic/area4_ablation_3heads_5 \
+    model_name=PointGroup-PAPER training=treeins job_name=treeins_my_first_run \
+    data.dataroot=/path/to/data training.epochs=150 training.batch_size=4 training.wandb.log=False
+```
+(These are also the defaults in `conf/config.yaml`, so `python train.py data.dataroot=... training.wandb.log=False` works.)
 
-In order to train the model you have to prepare the data. You can take a look at file : `sample_data_conversion.py` to check how it may be done. 
+Data layout: `<dataroot>/treeinsfused/raw/<region>/*.ply`, binary PLY with `x, y, z, semantic_seg, treeID`.
+`semantic_seg`: 0 = unclassified (ignored), 1 = non-tree, 2 = tree. `treeID`: instance id, 0 for non-tree points.
+Files whose names end in `val.ply` go to validation, `test.ply` to test, everything else to training.
+Coordinates should be plot-local with the ground near z = 0 (the same convention as inference).
+`sample_data_conversion.py` shows the LAS to PLY conversion used for the paper.
+
+Instance clustering only runs after `prepare_epoch` (30) epochs, so train for more than that.
+Set `training.wandb.entity` to your own account if you keep `training.wandb.log=True`.
 
 ## Issues
 If you encounter any issues with the code please provide your feedback by raising an issue in this repo rather than contacting the paper authors!
