@@ -618,62 +618,69 @@ class PanopticTracker(SegmentationTracker):
                     # torch.reshape(self._test_area.ins_pre_embed[has_prediction], (-1,1)), self._test_area.pos[has_prediction], self._test_area.pos, k=1,
                     # )
 
-                    # instance prediction with color for subsampled cloud
-                    self._dataset.to_ins_ply(
-                        test_area_i.pos[has_prediction].cpu(),
-                        test_area_i.ins_pre[has_prediction].cpu().numpy(),
-                        "Instance_subsample_{}.ply".format(i),
-                        # @Treeins: save subsampled instance segmentation prediction of current data file
-                    )
+                    # A file without a single predicted instance (open water, bare ground) has an
+                    # empty has_prediction: the knn below would then index an empty tensor and the
+                    # stuff-class masking raised IndexError, killing the whole eval batch.
+                    if int(has_prediction.sum()) == 0:
+                        print("no instance predicted for file {}; writing an empty instance result".format(i))
+                        full_ins_pred = torch.full((test_area_i.pos.shape[0],), -1, dtype=test_area_i.ins_pre.dtype)
+                    else:
+                        # instance prediction with color for subsampled cloud
+                        self._dataset.to_ins_ply(
+                            test_area_i.pos[has_prediction].cpu(),
+                            test_area_i.ins_pre[has_prediction].cpu().numpy(),
+                            "Instance_subsample_{}.ply".format(i),
+                            # @Treeins: save subsampled instance segmentation prediction of current data file
+                        )
 
-                    # assign_index = knn(test_area_i.pos[has_prediction], test_area_i.pos, k=1)
+                        # assign_index = knn(test_area_i.pos[has_prediction], test_area_i.pos, k=1)
                     
-                    print("Doing knn")
-                    print("data is on device: {}".format(test_area_i.pos.device))
+                        print("Doing knn")
+                        print("data is on device: {}".format(test_area_i.pos.device))
 
-                    assign_index = knn(test_area_i.pos[has_prediction].cpu(), test_area_i.pos.cpu(), k=1, num_workers=48)
+                        assign_index = knn(test_area_i.pos[has_prediction].cpu(), test_area_i.pos.cpu(), k=1, num_workers=48)
 
-                    print("Done knn")
+                        print("Done knn")
 
-                    # assign_index2  = nearest(self._test_area.pos, self._test_area.pos[has_prediction])
+                        # assign_index2  = nearest(self._test_area.pos, self._test_area.pos[has_prediction])
 
-                    y_idx, x_idx = assign_index
+                        y_idx, x_idx = assign_index
 
-                    full_ins_pred = test_area_i.ins_pre[has_prediction][x_idx]
+                        full_ins_pred = test_area_i.ins_pre[has_prediction][x_idx]
 
-                    full_ins_pred = torch.reshape(full_ins_pred, (-1,))
-                    # instance prediction and GT label full cloud (for final evaluation)
+                        full_ins_pred = torch.reshape(full_ins_pred, (-1,))
+                        # instance prediction and GT label full cloud (for final evaluation)
 
-                    # idx_in_cur = [idx for idx, l in enumerate(torch.argmax(full_pred, 1).numpy()) if l in self._dataset.stuff_classes]
-                    # idx_in_cur = np.array(idx_in_cur)
-                    # idx_in_cur.astype(int)
+                        # idx_in_cur = [idx for idx, l in enumerate(torch.argmax(full_pred, 1).numpy()) if l in self._dataset.stuff_classes]
+                        # idx_in_cur = np.array(idx_in_cur)
+                        # idx_in_cur.astype(int)
 
-                    # assign no instance label for points belonging to stuff classes
-                    pre_sem_labels_full = torch.argmax(full_pred, 1)
-                    for idx, l in enumerate(self._dataset.stuff_classes):
-                        idx_in_cur = (pre_sem_labels_full == l).nonzero(as_tuple=True)[0].numpy().astype(int)
+                        # assign no instance label for points belonging to stuff classes
+                        pre_sem_labels_full = torch.argmax(full_pred, 1)
+                        for idx, l in enumerate(self._dataset.stuff_classes):
+                            idx_in_cur = (pre_sem_labels_full == l).nonzero(as_tuple=True)[0].numpy().astype(int)
+                            full_ins_pred[idx_in_cur] = -1
+
+                        # If the distance between the point to be assigned label and its nearest point (the point which already has point) is larger than a threshold (e.g., 1m), assign -1 to this point as well.
+                        mat_pos = torch.sub(test_area_i.pos[has_prediction][x_idx], test_area_i.pos[y_idx])
+                        mat_pos = mat_pos.pow(2)
+                        mat_pos = torch.sum(mat_pos, 1)
+                        mat_pos = mat_pos.sqrt()
+                        idx_in_cur = mat_pos > 1
                         full_ins_pred[idx_in_cur] = -1
+                        # for i,k in enumerate(x_idx):
+                        #    if (self._test_area.pos[has_prediction][k]-self._test_area.pos[i]).pow(2).sum().sqrt()>1:
+                        #        full_ins_pred[i]=-1
 
-                    # If the distance between the point to be assigned label and its nearest point (the point which already has point) is larger than a threshold (e.g., 1m), assign -1 to this point as well.
-                    mat_pos = torch.sub(test_area_i.pos[has_prediction][x_idx], test_area_i.pos[y_idx])
-                    mat_pos = mat_pos.pow(2)
-                    mat_pos = torch.sum(mat_pos, 1)
-                    mat_pos = mat_pos.sqrt()
-                    idx_in_cur = mat_pos > 1
-                    full_ins_pred[idx_in_cur] = -1
-                    # for i,k in enumerate(x_idx):
-                    #    if (self._test_area.pos[has_prediction][k]-self._test_area.pos[i]).pow(2).sum().sqrt()>1:
-                    #        full_ins_pred[i]=-1
-
-                    # remove instance that contains point number less than 10
-                    unique_predicted_inslabels = torch.unique(full_ins_pred)
-                    for l in unique_predicted_inslabels:
-                        if l == -1:
-                            continue
-                        label_mask_l = full_ins_pred == l
-                        size_l = full_ins_pred[label_mask_l].shape[0]
-                        if size_l < 10:
-                            full_ins_pred[label_mask_l] = -1
+                        # remove instance that contains point number less than 10
+                        unique_predicted_inslabels = torch.unique(full_ins_pred)
+                        for l in unique_predicted_inslabels:
+                            if l == -1:
+                                continue
+                            label_mask_l = full_ins_pred == l
+                            size_l = full_ins_pred[label_mask_l].shape[0]
+                            if size_l < 10:
+                                full_ins_pred[label_mask_l] = -1
 
                     '''self._dataset.to_eval_ply(
                         self._test_area.pos,
